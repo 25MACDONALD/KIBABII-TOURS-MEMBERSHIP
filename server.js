@@ -81,6 +81,16 @@ db.exec(initSql, (err) => {
   seedDemoData();
 });
 
+// Ensure users table has is_admin column (for existing DBs)
+db.get("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'", (err, row) => {
+  if (err) return console.error('DB schema check error', err);
+  if (row && row.sql && !row.sql.includes('is_admin')) {
+    db.run('ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0', (err) => {
+      if (err) console.error('Failed to add is_admin column', err);
+    });
+  }
+});
+
 function seedDemoData() {
   db.get('SELECT COUNT(*) as c FROM courses', (err, row) => {
     if (err) return console.error(err);
@@ -120,7 +130,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 function createToken(user) {
-  return jwt.sign({ id: user.id, regno: user.regno, name: user.name }, JWT_SECRET, { expiresIn: '7d' });
+  return jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '7d' });
 }
 
 function authMiddleware(req, res, next) {
@@ -130,11 +140,23 @@ function authMiddleware(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Unauthorized' });
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    req.user = payload;
-    next();
+    // reload user from DB to pick up role changes
+    db.get('SELECT id, regno, name, is_admin FROM users WHERE id = ?', [payload.id], (err, row) => {
+      if (err) return res.status(500).json({ error: 'DB error' });
+      if (!row) return res.status(401).json({ error: 'User not found' });
+      // normalize is_admin to boolean
+      row.is_admin = row.is_admin ? 1 : 0;
+      req.user = row;
+      next();
+    });
   } catch (e) {
     return res.status(401).json({ error: 'Invalid token' });
   }
+}
+
+function adminOnly(req, res, next) {
+  if (!req.user || !req.user.is_admin) return res.status(403).json({ error: 'Admin required' });
+  next();
 }
 
 // Register
@@ -142,14 +164,19 @@ app.post('/api/register', async (req, res) => {
   const { regno, name, password } = req.body;
   if (!regno || !password) return res.status(400).json({ error: 'regno and password required' });
   const hash = await bcrypt.hash(password, 10);
-  db.run('INSERT INTO users (regno, name, password_hash) VALUES (?, ?, ?)', [regno, name || null, hash], function(err) {
+  // If ADMIN_REGNO env var is set, auto-promote that regno to admin on registration
+  const isAdminFlag = (process.env.ADMIN_REGNO && process.env.ADMIN_REGNO === regno) ? 1 : 0;
+  db.run('INSERT INTO users (regno, name, password_hash, is_admin) VALUES (?, ?, ?, ?)', [regno, name || null, hash, isAdminFlag], function(err) {
     if (err) {
       if (err.code === 'SQLITE_CONSTRAINT') return res.status(400).json({ error: 'Registration number already used' });
       return res.status(500).json({ error: 'DB error' });
     }
-    const user = { id: this.lastID, regno, name };
-    const token = createToken(user);
-    res.json({ token, user });
+    // fetch created user with is_admin
+    db.get('SELECT id, regno, name, is_admin FROM users WHERE id = ?', [this.lastID], (err, row) => {
+      if (err) return res.status(500).json({ error: 'DB error' });
+      const token = createToken(row);
+      res.json({ token, user: row });
+    });
   });
 });
 
@@ -157,12 +184,12 @@ app.post('/api/register', async (req, res) => {
 app.post('/api/login', (req, res) => {
   const { regno, password } = req.body;
   if (!regno || !password) return res.status(400).json({ error: 'regno and password required' });
-  db.get('SELECT id, regno, name, password_hash FROM users WHERE regno = ?', [regno], async (err, row) => {
+  db.get('SELECT id, regno, name, password_hash, is_admin FROM users WHERE regno = ?', [regno], async (err, row) => {
     if (err) return res.status(500).json({ error: 'DB error' });
     if (!row) return res.status(400).json({ error: 'Invalid credentials' });
     const ok = await bcrypt.compare(password, row.password_hash);
     if (!ok) return res.status(400).json({ error: 'Invalid credentials' });
-    const user = { id: row.id, regno: row.regno, name: row.name };
+    const user = { id: row.id, regno: row.regno, name: row.name, is_admin: row.is_admin ? 1 : 0 };
     const token = createToken(user);
     res.json({ token, user });
   });
@@ -257,9 +284,9 @@ app.get('/api/me', authMiddleware, (req, res) => {
   res.json({ user: req.user });
 });
 
-// ----- Admin endpoints (simple) -----
+// ----- Admin endpoints (require admin role) -----
 // Create a course
-app.post('/api/admin/course', authMiddleware, (req, res) => {
+app.post('/api/admin/course', authMiddleware, adminOnly, (req, res) => {
   const { title, description } = req.body;
   if (!title) return res.status(400).json({ error: 'title required' });
   db.run('INSERT INTO courses (title, description) VALUES (?, ?)', [title, description || null], function(err) {
@@ -270,7 +297,7 @@ app.post('/api/admin/course', authMiddleware, (req, res) => {
 
 // Create a quiz with questions and choices
 // Payload: { course_id, title, questions: [ { text, choices: [ { text, is_correct } ] } ] }
-app.post('/api/admin/quiz', authMiddleware, (req, res) => {
+app.post('/api/admin/quiz', authMiddleware, adminOnly, (req, res) => {
   const { course_id, title, questions } = req.body;
   if (!course_id || !questions || !Array.isArray(questions)) return res.status(400).json({ error: 'course_id and questions required' });
   db.run('INSERT INTO quizzes (course_id, title) VALUES (?, ?)', [course_id, title || null], function(err) {
@@ -292,17 +319,35 @@ app.post('/api/admin/quiz', authMiddleware, (req, res) => {
 });
 
 // Admin list endpoints
-app.get('/api/admin/courses', authMiddleware, (req, res) => {
+app.get('/api/admin/courses', authMiddleware, adminOnly, (req, res) => {
   db.all('SELECT id, title, description FROM courses', [], (err, rows) => {
     if (err) return res.status(500).json({ error: 'DB error' });
     res.json({ courses: rows });
   });
 });
 
-app.get('/api/admin/quizzes', authMiddleware, (req, res) => {
+app.get('/api/admin/quizzes', authMiddleware, adminOnly, (req, res) => {
   db.all('SELECT id, course_id, title FROM quizzes', [], (err, rows) => {
     if (err) return res.status(500).json({ error: 'DB error' });
     res.json({ quizzes: rows });
+  });
+});
+
+// List users (admin)
+app.get('/api/admin/users', authMiddleware, adminOnly, (req, res) => {
+  db.all('SELECT id, regno, name, is_admin FROM users', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: 'DB error' });
+    res.json({ users: rows.map(r => ({ id: r.id, regno: r.regno, name: r.name, is_admin: r.is_admin ? 1 : 0 })) });
+  });
+});
+
+// Promote or demote a user by id
+app.post('/api/admin/promote', authMiddleware, adminOnly, (req, res) => {
+  const { id, is_admin } = req.body;
+  if (typeof id === 'undefined' || typeof is_admin === 'undefined') return res.status(400).json({ error: 'id and is_admin required' });
+  db.run('UPDATE users SET is_admin = ? WHERE id = ?', [is_admin ? 1 : 0, id], function(err) {
+    if (err) return res.status(500).json({ error: 'DB error' });
+    res.json({ id, is_admin: is_admin ? 1 : 0 });
   });
 });
 

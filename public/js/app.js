@@ -122,3 +122,27 @@ if (window.location.pathname.endsWith('/admin.html')) {
     quizMsg.innerText = res.ok ? `Created quiz ID ${d.quizId}` : (d.error || 'Error');
   });
 }
+
+// Admin users management
+if (window.location.pathname.endsWith('/admin.html')) {
+  const usersList = document.getElementById('usersList');
+  async function loadUsers(){
+    const res = await fetch('/api/admin/users', { headers: authHeaders() });
+    if (!res.ok) { usersList.innerText = 'Failed to load users (are you admin?)'; return; }
+    const data = await res.json();
+    usersList.innerHTML = data.users.map(u => `
+      <div style="padding:6px;border-bottom:1px solid #ddd">
+        <strong>${u.regno}</strong> ${u.name ? '- '+u.name : ''}
+        <label style="margin-left:8px">Admin: <input type="checkbox" data-id="${u.id}" ${u.is_admin? 'checked':''}></label>
+      </div>
+    `).join('');
+    // attach change handlers
+    usersList.querySelectorAll('input[type=checkbox]').forEach(cb => cb.addEventListener('change', async (e) => {
+      const id = e.target.getAttribute('data-id');
+      const is_admin = e.target.checked ? 1 : 0;
+      const r = await fetch('/api/admin/promote', { method:'POST', headers: Object.assign({'Content-Type':'application/json'}, authHeaders()), body: JSON.stringify({ id, is_admin }) });
+      if (!r.ok) alert('Failed to update user');
+    }));
+  }
+  loadUsers();
+}
