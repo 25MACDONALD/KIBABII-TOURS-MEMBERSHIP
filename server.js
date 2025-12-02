@@ -351,6 +351,42 @@ app.post('/api/admin/promote', authMiddleware, adminOnly, (req, res) => {
   });
 });
 
+// Admin report: returns user x quiz latest scores. format=json|csv (default csv)
+app.get('/api/admin/report', authMiddleware, adminOnly, (req, res) => {
+  const format = (req.query.format || 'csv').toLowerCase();
+  // Build a report of every user x quiz with latest attempt (if any)
+  const sql = `
+    SELECT u.regno, u.name,
+      q.id as quiz_id, q.title as quiz_title,
+      (SELECT score FROM attempts a2 WHERE a2.user_id = u.id AND a2.quiz_id = q.id ORDER BY taken_at DESC LIMIT 1) as score,
+      (SELECT taken_at FROM attempts a2 WHERE a2.user_id = u.id AND a2.quiz_id = q.id ORDER BY taken_at DESC LIMIT 1) as taken_at
+    FROM users u
+    CROSS JOIN quizzes q
+    ORDER BY u.regno, q.id
+  `;
+  db.all(sql, [], (err, rows) => {
+    if (err) return res.status(500).json({ error: 'DB error' });
+    if (format === 'json') return res.json({ report: rows });
+
+    // CSV
+    const esc = (v) => {
+      if (v === null || typeof v === 'undefined') return '';
+      const s = String(v);
+      if (s.includes(',') || s.includes('\n') || s.includes('"')) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    };
+    const header = ['RegNo','Name','QuizID','QuizTitle','Score','TakenAt'];
+    const lines = [header.join(',')];
+    rows.forEach(r => {
+      lines.push([r.regno, r.name || '', r.quiz_id, r.quiz_title || '', r.score || '', r.taken_at || ''].map(esc).join(','));
+    });
+    const csv = lines.join('\n');
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="kibabii_report.csv"');
+    res.send(csv);
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });

@@ -146,3 +146,44 @@ if (window.location.pathname.endsWith('/admin.html')) {
   }
   loadUsers();
 }
+
+// Report handlers
+if (window.location.pathname.endsWith('/admin.html')) {
+  const downloadBtn = document.getElementById('downloadReport');
+  const viewBtn = document.getElementById('viewReport');
+  const reportArea = document.getElementById('reportArea');
+  if (downloadBtn) downloadBtn.addEventListener('click', async () => {
+    const url = '/api/admin/report?format=csv';
+    // simply navigate to the URL to prompt download with auth header via fetch -> blob
+    const res = await fetch(url, { headers: authHeaders() });
+    if (!res.ok) return alert('Failed to download report');
+    const blob = await res.blob();
+    const u = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = u; a.download = 'kibabii_report.csv';
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(u);
+  });
+  if (viewBtn) viewBtn.addEventListener('click', async () => {
+    reportArea.innerText = 'Loading...';
+    const res = await fetch('/api/admin/report?format=json', { headers: authHeaders() });
+    if (!res.ok) return reportArea.innerText = 'Failed to load report';
+    const data = await res.json();
+    if (!data.report || !data.report.length) return reportArea.innerText = 'No report data';
+    // build simple table
+    const table = document.createElement('table');
+    table.style.width = '100%'; table.style.borderCollapse = 'collapse';
+    const header = ['RegNo','Name','Quiz','Score','TakenAt'];
+    const thead = document.createElement('thead');
+    thead.innerHTML = '<tr>' + header.map(h => `<th style="border:1px solid #ddd;padding:6px;text-align:left">${h}</th>`).join('') + '</tr>';
+    table.appendChild(thead);
+    const tbody = document.createElement('tbody');
+    data.report.forEach(r => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = [r.regno, r.name || '', r.quiz_title || '', r.score || '', r.taken_at || ''].map(c => `<td style="border:1px solid #eee;padding:6px">${c}</td>`).join('');
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    reportArea.innerHTML = '';
+    reportArea.appendChild(table);
+  });
+}
