@@ -1,0 +1,37 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Admin - KIBABII</title>
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <main class="form">
+    <h2>Admin</h2>
+    <section>
+      <h3>Create Course</h3>
+      <form id="courseForm">
+        <label>Title<input name="title" required></label>
+        <label>Description<textarea name="description"></textarea></label>
+        <button type="submit">Create Course</button>
+      </form>
+      <div id="courseMsg"></div>
+    </section>
+
+    <section>
+      <h3>Create Quiz (JSON)</h3>
+      <p>Provide quiz JSON payload in this format:</p>
+      <pre>{ "course_id": 1, "title": "Quiz title", "questions": [ { "text": "Q?", "choices": [ { "text": "A", "is_correct": true }, { "text": "B", "is_correct": false } ] } ] }</pre>
+      <form id="quizForm">
+        <label>JSON<textarea name="payload" rows="8" required></textarea></label>
+        <button type="submit">Create Quiz</button>
+      </form>
+      <div id="quizMsg"></div>
+    </section>
+
+    <p><a href="/dashboard.html">Back to Dashboard</a></p>
+  </main>
+  <script src="/js/app.js"></script>
+</body>
+</html>

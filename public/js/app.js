@@ -96,3 +96,29 @@ if (window.location.pathname.endsWith('/quiz.html')) {
 }
 
 // Simple redirect from root to index handled by static server
+
+// Admin page handlers
+if (window.location.pathname.endsWith('/admin.html')) {
+  const courseForm = document.getElementById('courseForm');
+  const courseMsg = document.getElementById('courseMsg');
+  if (courseForm) courseForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(courseForm);
+    const body = { title: fd.get('title'), description: fd.get('description') };
+    const res = await fetch('/api/admin/course', { method:'POST', headers: Object.assign({'Content-Type':'application/json'}, authHeaders()), body: JSON.stringify(body) });
+    const d = await res.json();
+    courseMsg.innerText = res.ok ? `Created course ID ${d.id}` : (d.error || 'Error');
+  });
+
+  const quizForm = document.getElementById('quizForm');
+  const quizMsg = document.getElementById('quizMsg');
+  if (quizForm) quizForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(quizForm);
+    let payload = null;
+    try { payload = JSON.parse(fd.get('payload')); } catch (err) { quizMsg.innerText = 'Invalid JSON'; return; }
+    const res = await fetch('/api/admin/quiz', { method:'POST', headers: Object.assign({'Content-Type':'application/json'}, authHeaders()), body: JSON.stringify(payload) });
+    const d = await res.json();
+    quizMsg.innerText = res.ok ? `Created quiz ID ${d.quizId}` : (d.error || 'Error');
+  });
+}

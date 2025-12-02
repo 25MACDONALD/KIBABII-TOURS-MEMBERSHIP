@@ -257,6 +257,55 @@ app.get('/api/me', authMiddleware, (req, res) => {
   res.json({ user: req.user });
 });
 
+// ----- Admin endpoints (simple) -----
+// Create a course
+app.post('/api/admin/course', authMiddleware, (req, res) => {
+  const { title, description } = req.body;
+  if (!title) return res.status(400).json({ error: 'title required' });
+  db.run('INSERT INTO courses (title, description) VALUES (?, ?)', [title, description || null], function(err) {
+    if (err) return res.status(500).json({ error: 'DB error' });
+    res.json({ id: this.lastID, title, description });
+  });
+});
+
+// Create a quiz with questions and choices
+// Payload: { course_id, title, questions: [ { text, choices: [ { text, is_correct } ] } ] }
+app.post('/api/admin/quiz', authMiddleware, (req, res) => {
+  const { course_id, title, questions } = req.body;
+  if (!course_id || !questions || !Array.isArray(questions)) return res.status(400).json({ error: 'course_id and questions required' });
+  db.run('INSERT INTO quizzes (course_id, title) VALUES (?, ?)', [course_id, title || null], function(err) {
+    if (err) return res.status(500).json({ error: 'DB error creating quiz' });
+    const quizId = this.lastID;
+    const stmtQ = db.prepare('INSERT INTO questions (quiz_id, text) VALUES (?, ?)');
+    const stmtC = db.prepare('INSERT INTO choices (question_id, text, is_correct) VALUES (?, ?, ?)');
+    questions.forEach(q => {
+      stmtQ.run([quizId, q.text], function(err) {
+        const qid = this.lastID;
+        (q.choices || []).forEach(ch => {
+          stmtC.run([qid, ch.text, ch.is_correct ? 1 : 0]);
+        });
+      });
+    });
+    stmtQ.finalize(); stmtC.finalize();
+    res.json({ quizId });
+  });
+});
+
+// Admin list endpoints
+app.get('/api/admin/courses', authMiddleware, (req, res) => {
+  db.all('SELECT id, title, description FROM courses', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: 'DB error' });
+    res.json({ courses: rows });
+  });
+});
+
+app.get('/api/admin/quizzes', authMiddleware, (req, res) => {
+  db.all('SELECT id, course_id, title FROM quizzes', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: 'DB error' });
+    res.json({ quizzes: rows });
+  });
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });
